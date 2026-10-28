@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# editores y SO
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+.venv/
+venv/
+
+# artefactos locales del laboratorio (no forman parte del repo)
+*.model.json
+export-*.json
+preview.png

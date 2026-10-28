@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>IAS · laboratorio de redes neuronales</title>
+<meta name="description" content="Entrena una red neuronal de verdad, en vivo, en el navegador. Cero dependencias, cero build: un MLP con backprop y Adam escrito a mano, con su gemelo en Python puro." />
+<meta name="color-scheme" content="dark" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23070b14'/%3E%3Cg stroke='%2339e0c8' stroke-width='1.6' fill='none'%3E%3Cpath d='M8 8l16 8M8 24l16-8M8 8v16'/%3E%3C/g%3E%3Cg fill='%23ff6b8a'%3E%3Ccircle cx='8' cy='8' r='2.6'/%3E%3Ccircle cx='8' cy='24' r='2.6'/%3E%3C/g%3E%3Ccircle cx='24' cy='16' r='2.8' fill='%23ffd166'/%3E%3C/svg%3E" />
+<link rel="stylesheet" href="assets/styles.css" />
+</head>
+<body>
+<div class="bg" aria-hidden="true"><div class="bg-grid"></div><div class="bg-glow"></div><div class="bg-scan"></div></div>
+
+<header class="top">
+  <div class="brand">
+    <span class="mark" aria-hidden="true">
+      <svg viewBox="0 0 40 40" width="34" height="34">
+        <g class="links" stroke="currentColor" stroke-width="1.4" fill="none" opacity=".55">
+          <path d="M9 9 L20 20 M9 31 L20 20 M20 20 L31 13 M20 20 L31 27 M9 9 L9 31 M31 13 L31 27" />
+        </g>
+        <g fill="currentColor">
+          <circle cx="9" cy="9" r="2.8" /><circle cx="9" cy="31" r="2.8" /><circle cx="31" cy="13" r="2.6" /><circle cx="31" cy="27" r="2.6" />
+        </g>
+        <circle class="hub" cx="20" cy="20" r="4.2" fill="#ffd166" />
+      </svg>
+    </span>
+    <div class="brand-text">
+      <h1>IAS <span>·</span> <em>laboratorio de redes neuronales</em></h1>
+      <p>Dibuja los datos, mira cómo aprende. <b>Sin librerías</b>: el backprop y Adam están escritos a mano.</p>
+    </div>
+  </div>
+  <nav class="top-actions">
+    <button id="btn-help" class="ghost" title="Atajos y explicación (?)">?</button>
+    <button id="btn-about" class="ghost" title="Cómo funciona esto">cómo funciona</button>
+    <a class="ghost" href="https://github.com/sceneeditz67-maker/Ias" target="_blank" rel="noopener">github</a>
+  </nav>
+</header>
+
+<main class="lab">
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Escenario                                                           -->
+  <!-- ------------------------------------------------------------------ -->
+  <section class="stage" id="stage">
+    <canvas id="field" aria-label="Plano de entrenamiento. Haz clic para añadir puntos de datos y observa la frontera de decisión."></canvas>
+
+    <div class="stage-hud hud-tl">
+      <span class="chip live"><i class="dot" id="led"></i><b id="hud-state">entrenando</b></span>
+      <span class="chip mono" title="época completa">época <b id="hud-epoch">0</b></span>
+      <span class="chip mono" title="función de pérdida (entropía cruzada binaria)">loss <b id="hud-loss">—</b></span>
+      <span class="chip mono" title="exactitud sobre los puntos de entrenamiento">train <b id="hud-acc">—</b></span>
+      <span class="chip mono" title="exactitud sobre puntos reservados, que la red nunca ve">test <b id="hud-test">—</b></span>
+    </div>
+
+    <div class="stage-hud hud-tr">
+      <button class="chip icon" id="btn-play" title="Espacio">⏸ pausa</button>
+      <button class="chip icon" id="btn-step" title="Entrena una época suelta (.)">⇥ época</button>
+      <button class="chip icon" id="btn-reset" title="Reinicia los pesos (r)">↺ pesos</button>
+      <button class="chip icon" id="btn-clear" title="Vacía el plano (c)">✕ datos</button>
+    </div>
+
+    <div class="stage-hud hud-bl" id="brush-box">
+      <span class="label">pincel</span>
+      <button class="brush b0 active" data-brush="0" title="Clase A (tecla 1)"><i></i>A</button>
+      <button class="brush b1" data-brush="1" title="Clase B (tecla 2)"><i></i>B</button>
+      <button class="brush bE" data-brush="erase" title="Borrar (tecla 3 o Alt+clic)">⌫</button>
+      <span class="hint">clic para pintar · arrastra para dibujar varios</span>
+    </div>
+
+    <div class="stage-hud hud-br probe" id="probe" hidden>
+      <span class="mono">x <b id="probe-x">0.00</b> · y <b id="probe-y">0.00</b></span>
+      <span class="mono">p(B) <b id="probe-p">0.00</b></span>
+      <span class="verdict" id="probe-v">—</span>
+    </div>
+
+    <div class="stage-caption">
+      <span id="cap-text">la superficie de color es la probabilidad que asigna la red a cada punto del plano</span>
+      <span class="sep"></span>
+      <span id="cap-sub">la línea blanca es la frontera de decisión (p = 0.5)</span>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Gráficos                                                            -->
+  <!-- ------------------------------------------------------------------ -->
+  <section class="strip" id="strip">
+    <div class="card chart-card">
+      <div class="card-head">
+        <h2>curvas de aprendizaje</h2>
+        <span class="tag" id="chart-span">últimas 100 épocas</span>
+      </div>
+      <canvas id="chart" height="128"></canvas>
+      <div class="legend">
+        <span><i class="sw" style="--c:var(--loss)"></i>pérdida</span>
+        <span><i class="sw" style="--c:var(--acc)"></i>exactitud train</span>
+        <span><i class="sw" style="--c:var(--acc2)"></i>exactitud test</span>
+      </div>
+    </div>
+
+    <div class="card net-card">
+      <div class="card-head">
+        <h2>arquitectura</h2>
+        <span class="tag mono" id="net-tag">2 → 10 → 8 → 1</span>
+      </div>
+      <canvas id="net" height="128"></canvas>
+      <div class="legend">
+        <span><i class="sw pos"></i>peso &gt; 0</span>
+        <span><i class="sw neg"></i>peso &lt; 0</span>
+        <span class="dim">el grosor es la magnitud · pasa el cursor por el plano para ver las activaciones</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------------ -->
+  <!-- Panel de control                                                    -->
+  <!-- ------------------------------------------------------------------ -->
+  <aside class="panel">
+    <div class="card">
+      <div class="card-head"><h2>dataset</h2><span class="tag" id="ds-tag">240 puntos</span></div>
+      <div class="ds-grid" id="ds-grid">
+        <button data-ds="blobs">manchas</button>
+        <button data-ds="xor">XOR</button>
+        <button data-ds="circle">anillos</button>
+        <button data-ds="moons">lunas</button>
+        <button data-ds="spiral" class="on">espiral</button>
+        <button data-ds="checker">tablero</button>
+        <button data-ds="sine">seno</button>
+        <button data-ds="hand">a mano</button>
+      </div>
+      <p class="note" id="ds-note"></p>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>hiperparámetros</h2><button class="tag link" id="btn-defaults">valores por defecto</button></div>
+
+      <div class="ctl">
+        <label>capas ocultas <output id="o-hidden">10, 8</output></label>
+        <div class="hidden-ctl" id="hidden-ctl"></div>
+        <p class="mini">cada capa añade capacidad no lineal. con [8] no puedes separar dos anillos; con [10, 8] sí.</p>
+      </div>
+
+      <div class="ctl">
+        <label>activación <output id="o-act">tanh</output></label>
+        <div class="seg" id="act-seg">
+          <button data-act="tanh" class="on">tanh</button>
+          <button data-act="relu">relu</button>
+          <button data-act="leaky">leaky</button>
+          <button data-act="elu">elu</button>
+        </div>
+      </div>
+
+      <div class="ctl">
+        <label for="i-lr">tasa de aprendizaje <output id="o-lr">0.020</output></label>
+        <input type="range" id="i-lr" min="-4" max="-1" step="0.05" value="-1.7" />
+        <p class="mini">demasiado alta y la red diverge; demasiado baja y no se entera.</p>
+      </div>
+
+      <div class="ctl">
+        <label for="i-batch">minibatch <output id="o-batch">32</output></label>
+        <input type="range" id="i-batch" min="1" max="8" step="1" value="6" />
+      </div>
+
+      <div class="ctl">
+        <label for="i-epf">épocas por fotograma <output id="o-epf">2</output></label>
+        <input type="range" id="i-epf" min="1" max="12" step="1" value="2" />
+      </div>
+
+      <div class="ctl two">
+        <div>
+          <label for="i-points">puntos <output id="o-points">240</output></label>
+          <input type="range" id="i-points" min="40" max="800" step="20" value="240" />
+        </div>
+        <div>
+          <label for="i-noise">ruido <output id="o-noise">0.07</output></label>
+          <input type="range" id="i-noise" min="0" max="0.35" step="0.01" value="0.07" />
+        </div>
+      </div>
+
+      <div class="ctl two">
+        <div>
+          <label for="i-test">% datos de test <output id="o-test">15%</output></label>
+          <input type="range" id="i-test" min="0" max="50" step="5" value="15" />
+        </div>
+        <div>
+          <label for="i-wd">regularización L2 <output id="o-wd">0.0000</output></label>
+          <input type="range" id="i-wd" min="-6" max="-2" step="0.1" value="-4" />
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-head"><h2>visualización</h2></div>
+      <div class="toggles">
+        <label class="tg"><input type="checkbox" id="t-heat" checked /><span>mapa de probabilidad</span></label>
+        <label class="tg"><input type="checkbox" id="t-contour" checked /><span>frontera p = 0.5</span></label>
+        <label class="tg"><input type="checkbox" id="t-iso" /><span>iso-líneas 0.1 / 0.9</span></label>
+        <label class="tg"><input type="checkbox" id="t-points" checked /><span>puntos</span></label>
+        <label class="tg"><input type="checkbox" id="t-misses" checked /><span>resaltar errores</span></label>
+        <label class="tg"><input type="checkbox" id="t-flow" checked /><span>flujo de señal</span></label>
+        <label class="tg"><input type="checkbox" id="t-grid" checked /><span>rejilla</span></label>
+      </div>
+      <div class="row-btns">
+        <button class="ghost" id="btn-export-png">↓ imagen PNG</button>
+        <button class="ghost" id="btn-export-json">↓ pesos .json</button>
+        <button class="ghost" id="btn-import-json">↑ importar .json</button>
+        <input type="file" id="file-json" accept=".json,application/json" hidden />
+        <button class="ghost" id="btn-share">⎘ enlace del estado</button>
+      </div>
+      <p class="note ok" id="io-note">.json exportado desde <code>python/ias_net.py --export m.json</code> también sirve.</p>
+    </div>
+
+    <div class="card stats">
+      <div class="card-head"><h2>estado</h2><span class="tag mono" id="fps">—</span></div>
+      <dl>
+        <div><dt>parámetros</dt><dd id="s-params">—</dd></div>
+        <div><dt>actualiz.</dt><dd id="s-updates">0</dd></div>
+        <div><dt>pérdida</dt><dd id="s-loss">—</dd></div>
+        <div><dt>exactitud</dt><dd id="s-acc">—</dd></div>
+        <div><dt>|∇w| máx</dt><dd id="s-gmax">—</dd></div>
+        <div><dt>peso medio |w|</dt><dd id="s-w">—</dd></div>
+      </dl>
+    </div>
+  </aside>
+</main>
+
+<!-- ---------------------------------------------------------------------- -->
+<!-- Documentación                                                          -->
+<!-- ---------------------------------------------------------------------- -->
+<section class="docs" id="docs">
+  <article class="doc">
+    <h2>lo que estás viendo</h2>
+    <p>La red tiene <b>2 entradas</b> (la posición x, y de un punto) y <b>1 salida</b>: la probabilidad de que ese punto pertenezca a la clase B. Nadie le ha dicho dónde va la frontera: la descubre minimizando la <b>entropía cruzada binaria</b>.</p>
+    <figure class="eq">
+      <code>L = −[ y·log p + (1−y)·log(1−p) ]</code>
+      <figcaption>p = σ(w₂·tanh(w₁·x + b₁) + b₂)</figcaption>
+    </figure>
+    <p>Cada fotograma repite tres pasos sobre un minibatch: <b>propagar hacia adelante</b> para predecir, <b>propagar el error hacia atrás</b> (regla de la cadena) para saber cómo ha contribuido cada peso, y <b>mover los pesos</b> con Adam en contra del gradiente.</p>
+  </article>
+
+  <article class="doc">
+    <h2>experimentos que funcionan</h2>
+    <ol class="lab-list">
+      <li><b>XOR con [4] no lineal.</b> Pon capas ocultas <code>[4]</code> y dataset <b>XOR</b>: aprende. Con <code>[]</code> (ninguna capa oculta) es <em>matemáticamente imposible</em>, y lo verás estancado en ~50 %.</li>
+      <li><b>Sobrentrenamiento.</b> Dataset <b>tablero</b>, <code>[16, 16, 16]</code>, ruido 0, L2 = 0 y sube los puntos a 800. La exactitud de test se despega de la de train: la red se memoriza el ruido.</li>
+      <li><b>Divergencia.</b> Sube la tasa de aprendizaje al máximo con <code>[10,8]</code>: verás la pérdida subir y la frontera temblar. El <em>gradient clipping</em> a 5.0 amortigua el desastre.</li>
+      <li><b>Dibuja tu propio dataset.</b> Elige <b>a mano</b>, pinta A con un clic y B con el otro, y entrena en vivo.</li>
+    </ol>
+  </article>
+
+  <article class="doc">
+    <h2>el mismo motor, en tu terminal</h2>
+    <p>Hay una implementación gemela en <code>python/ias_net.py</code>: mismos datasets, misma activación, mismo Adam. Sin numpy.</p>
+    <pre><code>python3 python/ias_net.py --data spiral -H 8,6 --watch
+python3 python/ias_net.py --check          # gradiente analítico vs numérico
+python3 python/ias_net.py --export m.json   # y ábrelo aquí con «importar .json»</code></pre>
+    <p class="mini">El export/include un formato <code>ias-mlp/1</code>: la red del navegador carga los pesos de Python y sigue entrenando desde ahí.</p>
+  </article>
+</section>
+
+<footer class="foot">
+  <span>IAS · un solo HTML, CSS y JS, sin build ni dependencias</span>
+  <span class="mono">motor: 550 líneas en JS + 645 en Python · 77 tests · licencia MIT</span>
+</footer>
+
+<!-- ---------------------------------------------------------------------- -->
+<!-- Ayuda                                                                  -->
+<!-- ---------------------------------------------------------------------- -->
+<div class="modal" id="modal-help" hidden>
+  <div class="sheet">
+    <button class="close" data-close aria-label="cerrar">✕</button>
+    <h2>atajos</h2>
+    <table class="keys">
+      <tr><th><kbd>espacio</kbd></th><td>pausar / reanudar el entrenamiento</td></tr>
+      <tr><th><kbd>.</kbd></th><td>avanzar una época sin reanudar</td></tr>
+      <tr><th><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></th><td>pincel clase A · clase B · goma</td></tr>
+      <tr><th><kbd>r</kbd></th><td>reiniciar los pesos (deja los datos)</td></tr>
+      <tr><th><kbd>c</kbd></th><td>vaciar el plano</td></tr>
+      <tr><th><kbd>d</kbd></th><td>siguiente dataset</td></tr>
+      <tr><th><kbd>alt</kbd> + clic</th><td>borrar el punto más cercano</td></tr>
+      <tr><th><kbd>?</kbd> / <kbd>esc</kbd></th><td>esta ayuda</td></tr>
+    </table>
+    <p class="mini">Todo se guarda en <code>localStorage</code>, así que puedes recargar sin perder tus puntos. El botón «enlace del estado» copia una URL que reproduce dataset + hiperparámetros exactos.</p>
+  </div>
+</div>
+
+<div class="modal" id="modal-about" hidden>
+  <div class="sheet wide">
+    <button class="close" data-close aria-label="cerrar">✕</button>
+    <h2>por qué esto no usa TensorFlow</h2>
+    <p>Porque una red neuronal para clasificar 2D son ~150 líneas: una matriz de pesos por capa, <code>tanh</code>, y la regla de la cadena. Aquí está todo a mano, en <code>assets/app.js</code>, y la versión en Python es literalmente la misma aritmética, para que puedas compararlas línea a línea.</p>
+    <ul>
+      <li><b>Optimizador:</b> Adam (β1 0.9, β2 0.999, ε 1e-8) con <em>weight decay</em> desacoplado y recorte de gradiente por norma infinita.</em></li>
+      <li><b>Inicialización:</b> gaussiana con σ = √(2/n) para relu/elu y √(1/n) para tanh.</li>
+      <li><b>Frontera:</b> la red se evalúa en una rejilla de 96×N y el contorno p=0.5 sale de marching squares sobre esa rejilla.</li>
+      <li><b>Test:</b> una fracción de los puntos se reserva y nunca entra en el <code>fit</code> — por eso la exactitud de test puede ser peor.</li>
+    </ul>
+    <p class="mini">Escrito como sorpresa para <code>sceneeditz67-maker/Ias</code>. Sin dependencias, sin build, sin tracker: ábrelo y juegas.</p>
+  </div>
+</div>
+
+<script src="assets/core.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>
